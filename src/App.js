@@ -1,76 +1,62 @@
 import React, { useState, useRef, useEffect } from "react";
 
-export default function App() {
+export default function QuranApp() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [quranText, setQuranText] = useState([]);
   const [pageNumber, setPageNumber] = useState(2);
+
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const intervalRef = useRef(null);
+  const timerRef = useRef(null);
 
-  // جلب بيانات الصفحة
+  // تحميل صفحة القرآن
   useEffect(() => {
     fetch(`https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthman`)
       .then((res) => res.json())
       .then((data) => {
         if (data.data && data.data.ayahs) {
-          setQuranText(data.data.ayahs);
+          setQuranText(data.data.ayahs.map((a) => ({ ...a, match: false })));
         }
-      })
-      .catch((err) => console.error(err));
+      });
   }, [pageNumber]);
 
   // بدء التسجيل
   const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream, {
-        mimeType: "audio/webm",
-      });
-      audioChunksRef.current = [];
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorderRef.current = new MediaRecorder(stream, {
+      mimeType: "audio/webm",
+    });
 
-      mediaRecorderRef.current.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
+    mediaRecorderRef.current.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunksRef.current.push(e.data);
+    };
 
-      mediaRecorderRef.current.onstop = () => {
-        processAudio();
-      };
+    mediaRecorderRef.current.onstop = () => {
+      processAudio();
+    };
 
+    mediaRecorderRef.current.start();
+
+    // يسجل 5 ثواني ويكرر
+    timerRef.current = setInterval(() => {
+      mediaRecorderRef.current.stop();
       mediaRecorderRef.current.start();
+    }, 5000);
 
-      // كل 5 ثواني يقسم التسجيل
-      intervalRef.current = setInterval(() => {
-        if (
-          mediaRecorderRef.current &&
-          mediaRecorderRef.current.state === "recording"
-        ) {
-          mediaRecorderRef.current.stop();
-          mediaRecorderRef.current.start();
-        }
-      }, 5000);
-
-      setRecording(true);
-    } catch (err) {
-      console.error("Microphone error:", err);
-    }
+    setRecording(true);
   };
 
   // إيقاف التسجيل
   const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-      clearInterval(intervalRef.current);
-    }
+    clearInterval(timerRef.current);
+    mediaRecorderRef.current.stop();
     setRecording(false);
   };
 
-  // تحويل webm → wav
-  const convertToWav = async (webmBlob) => {
-    const arrayBuffer = await webmBlob.arrayBuffer();
+  // تحويل WebM → WAV
+  const convertToWav = async (blob) => {
+    const arrayBuffer = await blob.arrayBuffer();
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
@@ -79,49 +65,40 @@ export default function App() {
   };
 
   const audioBufferToWav = (buffer) => {
-    let numOfChan = buffer.numberOfChannels,
-      length = buffer.length * numOfChan * 2 + 44,
-      bufferArray = new ArrayBuffer(length),
-      view = new DataView(bufferArray),
-      channels = [],
-      sampleRate = buffer.sampleRate,
-      offset = 0,
-      pos = 0;
+    const numOfChan = buffer.numberOfChannels;
+    const length = buffer.length * numOfChan * 2 + 44;
+    const result = new ArrayBuffer(length);
+    const view = new DataView(result);
+    let pos = 0;
 
-    const setUint16 = (data) => {
-      view.setUint16(pos, data, true);
+    const writeUint16 = (d) => {
+      view.setUint16(pos, d, true);
       pos += 2;
     };
-
-    const setUint32 = (data) => {
-      view.setUint32(pos, data, true);
+    const writeUint32 = (d) => {
+      view.setUint32(pos, d, true);
       pos += 4;
     };
 
-    // RIFF chunk descriptor
-    setUint32(0x46464952); // "RIFF"
-    setUint32(length - 8); // file length - 8
-    setUint32(0x45564157); // "WAVE"
+    // WAV header
+    writeUint32(0x46464952);
+    writeUint32(length - 8);
+    writeUint32(0x45564157);
+    writeUint32(0x20746d66);
+    writeUint32(16);
+    writeUint16(1);
+    writeUint16(numOfChan);
+    writeUint32(buffer.sampleRate);
+    writeUint32(buffer.sampleRate * 2 * numOfChan);
+    writeUint16(numOfChan * 2);
+    writeUint16(16);
+    writeUint32(0x61746164);
+    writeUint32(length - pos - 4);
 
-    // FMT sub-chunk
-    setUint32(0x20746d66); // "fmt "
-    setUint32(16); // size = 16
-    setUint16(1); // PCM
-    setUint16(numOfChan);
-    setUint32(sampleRate);
-    setUint32(sampleRate * 2 * numOfChan); // avg. bytes/sec
-    setUint16(numOfChan * 2); // block-align
-    setUint16(16); // 16-bit (hardcoded)
+    const channels = [];
+    for (let i = 0; i < numOfChan; i++) channels.push(buffer.getChannelData(i));
 
-    // data sub-chunk
-    setUint32(0x61746164); // "data"
-    setUint32(length - pos - 4);
-
-    // write interleaved data
-    for (let i = 0; i < buffer.numberOfChannels; i++) {
-      channels.push(buffer.getChannelData(i));
-    }
-
+    let offset = 0;
     while (pos < length) {
       for (let i = 0; i < numOfChan; i++) {
         let sample = Math.max(-1, Math.min(1, channels[i][offset]));
@@ -135,18 +112,17 @@ export default function App() {
       offset++;
     }
 
-    return bufferArray;
+    return result;
   };
 
-  // إرسال الصوت لـ Wit.ai
+  // إرسال لـ Wit.ai
   const processAudio = async () => {
     const webmBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
     audioChunksRef.current = [];
-
     const wavBlob = await convertToWav(webmBlob);
 
     try {
-      const response = await fetch("https://api.wit.ai/speech?v=20210928", {
+      const res = await fetch("https://api.wit.ai/speech?v=20210928", {
         method: "POST",
         headers: {
           Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
@@ -155,49 +131,46 @@ export default function App() {
         body: wavBlob,
       });
 
-      const json = await response.json();
-      console.log("Wit.ai response:", json);
+      const data = await res.json();
+      console.log("🎤 Wit.ai Response:", data);
 
-      if (json.text) {
-        setTranscript(json.text);
-        checkAyahMatch(json.text);
+      if (data.text) {
+        setTranscript(data.text);
+        highlightAyah(data.text);
       }
     } catch (err) {
-      console.error("Wit.ai error:", err);
+      console.error("Wit error:", err);
     }
   };
 
-  // التحقق من التطابق
-  const checkAyahMatch = (spoken) => {
-    const normalizedSpoken = spoken.replace(/[\u064B-\u0652]/g, ""); // إزالة التشكيل
-    const matchIndex = quranText.findIndex((ayah) =>
-      ayah.text.replace(/[\u064B-\u0652]/g, "").includes(normalizedSpoken)
-    );
+  // تظليل الآية المطابقة
+  const highlightAyah = (spoken) => {
+    const normalized = spoken.replace(/[\u064B-\u0652]/g, "");
+    let found = false;
 
-    if (matchIndex !== -1) {
-      const newQuranText = quranText.map((ayah, idx) => ({
-        ...ayah,
-        match: idx === matchIndex,
-      }));
-      setQuranText(newQuranText);
-
-      // أوتوماتيك: لو آخر آية، انتقل للصفحة التالية
-      if (matchIndex === quranText.length - 1) {
-        setPageNumber((prev) => prev + 1);
+    const updated = quranText.map((ayah, i) => {
+      const cleanAyah = ayah.text.replace(/[\u064B-\u0652]/g, "");
+      if (cleanAyah.includes(normalized)) {
+        found = true;
+        if (i === quranText.length - 1) setPageNumber((p) => p + 1); // Auto nav
+        return { ...ayah, match: true };
       }
-    }
+      return { ...ayah, match: false };
+    });
+
+    if (found) setQuranText(updated);
   };
 
   return (
     <div className="p-4">
-      <h1>📖 Quran Page {pageNumber}</h1>
+      <h1>📖 صفحة {pageNumber}</h1>
 
       {quranText.map((ayah) => (
         <p
           key={ayah.number}
           style={{
             direction: "rtl",
-            fontSize: "20px",
+            fontSize: "22px",
             background: ayah.match ? "lightgreen" : "transparent",
           }}
         >
@@ -209,16 +182,16 @@ export default function App() {
         {!recording ? (
           <button
             onClick={startRecording}
-            className="bg-green-500 text-white px-4 py-2 rounded"
+            className="bg-green-600 text-white px-4 py-2 rounded"
           >
-            ▶️ ابدأ التسجيل
+            ▶️ تسجيل
           </button>
         ) : (
           <button
             onClick={stopRecording}
-            className="bg-red-500 text-white px-4 py-2 rounded"
+            className="bg-red-600 text-white px-4 py-2 rounded"
           >
-            ⏹️ إيقاف التسجيل
+            ⏹ إيقاف
           </button>
         )}
 
@@ -236,8 +209,8 @@ export default function App() {
         </button>
       </div>
 
-      <h2 className="mt-4">🎤 النص المتعرف عليه:</h2>
-      <pre style={{ whiteSpace: "pre-wrap" }}>{transcript}</pre>
+      <h2 className="mt-4">🎤 النص:</h2>
+      <pre>{transcript}</pre>
     </div>
   );
 }
