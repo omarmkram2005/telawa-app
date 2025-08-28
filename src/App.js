@@ -6,7 +6,7 @@ import RecitationControl from "./RecitationControl";
 import ErrorLog from "./ErrorLog";
 
 const App = () => {
-  const [selectedPage, setSelectedPage] = useState(null);
+  const [selectedPage, setSelectedPage] = useState(1); // بدءًا من الصفحة 1
   const [currentVerse, setCurrentVerse] = useState(0);
   const [recognizedWords, setRecognizedWords] = useState({});
   const [errors, setErrors] = useState([]);
@@ -15,9 +15,7 @@ const App = () => {
   const [quranData, setQuranData] = useState(null);
 
   useEffect(() => {
-    if (selectedPage) {
-      fetchQuranPage(selectedPage);
-    }
+    fetchQuranPage(selectedPage);
   }, [selectedPage]);
 
   const fetchQuranPage = async (page) => {
@@ -25,7 +23,7 @@ const App = () => {
       const response = await axios.get(
         `https://api.alquran.cloud/v1/page/${page}/quran-uthmani`
       );
-      setQuranData(response.data.data); // تأكد من تعيين البيانات بشكل صحيح
+      setQuranData(response.data.data);
     } catch (error) {
       console.error("Error fetching Quran data:", error);
     }
@@ -76,8 +74,10 @@ const App = () => {
         setProgress((currentVerse / quranData.ayahs.length) * 100);
       } else {
         // الانتقال للصفحة التالية
-        setSelectedPage(selectedPage + 1);
-        setCurrentVerse(1);
+        if (selectedPage < 604) {
+          setSelectedPage(selectedPage + 1);
+          setCurrentVerse(1);
+        }
       }
     } else {
       setRecognizedWords((prev) => ({
@@ -93,7 +93,7 @@ const App = () => {
   };
 
   return (
-    <div className="container mx-auto p-4" dir="rtl">
+    <div className="container mx-auto p-4">
       <h1 className="text-3xl font-bold text-center mb-6">
         اختبار تلاوة القرآن الكريم
       </h1>
