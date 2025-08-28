@@ -1,167 +1,176 @@
 import React, { useState, useRef } from "react";
 
-const WIT_API = "https://api.wit.ai/speech?v=20240828";
-const WIT_TOKEN = "WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7";
-
-function App() {
-  const [transcript, setTranscript] = useState("مستني تسجيل 🎤");
-  const [debug, setDebug] = useState(""); // عشان نعرض الريسبونس
+export default function QuranRecitationApp() {
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognizedText, setRecognizedText] = useState("");
+  const [quranText, setQuranText] = useState("");
+  const [highlightedText, setHighlightedText] = useState("");
   const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
+  const audioChunksRef = useRef([]);
 
-  const convertToWav = async (blob) => {
-    const arrayBuffer = await blob.arrayBuffer();
+  // 🔹 1. Load Quran text from API (مثال: سورة البقرة 1-5)
+  const fetchQuranText = async () => {
+    try {
+      const res = await fetch("https://api.alquran.cloud/v1/ayah/2:1-5");
+      const data = await res.json();
+      const text = data.data.map((ayah) => ayah.text).join(" ");
+      setQuranText(text);
+    } catch (err) {
+      console.error("❌ Quran API error:", err);
+    }
+  };
+
+  // 🔹 2. Convert WebM to WAV
+  const webmToWav = async (webmBlob) => {
     const audioCtx = new AudioContext();
+    const arrayBuffer = await webmBlob.arrayBuffer();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
     const wavBuffer = audioBufferToWav(audioBuffer);
     return new Blob([wavBuffer], { type: "audio/wav" });
   };
 
-  function audioBufferToWav(buffer) {
+  const audioBufferToWav = (buffer) => {
     const numOfChan = buffer.numberOfChannels;
     const length = buffer.length * numOfChan * 2 + 44;
     const bufferArray = new ArrayBuffer(length);
     const view = new DataView(bufferArray);
-    const channels = [];
     let offset = 0;
-    let pos = 0;
 
-    function setUint16(data) {
-      view.setUint16(pos, data, true);
-      pos += 2;
-    }
-    function setUint32(data) {
-      view.setUint32(pos, data, true);
-      pos += 4;
-    }
+    const writeString = (s) => {
+      for (let i = 0; i < s.length; i++) {
+        view.setUint8(offset + i, s.charCodeAt(i));
+      }
+      offset += s.length;
+    };
 
     // WAV header
-    setUint32(0x46464952);
-    setUint32(length - 8);
-    setUint32(0x45564157);
-    setUint32(0x20746d66);
-    setUint32(16);
-    setUint16(1);
-    setUint16(numOfChan);
-    setUint32(buffer.sampleRate);
-    setUint32(buffer.sampleRate * 2 * numOfChan);
-    setUint16(numOfChan * 2);
-    setUint16(16);
-    setUint32(0x61746164);
-    setUint32(length - pos - 4);
+    writeString("RIFF");
+    view.setUint32(offset, 36 + buffer.length * numOfChan * 2, true);
+    offset += 4;
+    writeString("WAVE");
+    writeString("fmt ");
+    view.setUint32(offset, 16, true);
+    offset += 4;
+    view.setUint16(offset, 1, true);
+    offset += 2;
+    view.setUint16(offset, numOfChan, true);
+    offset += 2;
+    view.setUint32(offset, buffer.sampleRate, true);
+    offset += 4;
+    view.setUint32(offset, buffer.sampleRate * numOfChan * 2, true);
+    offset += 4;
+    view.setUint16(offset, numOfChan * 2, true);
+    offset += 2;
+    view.setUint16(offset, 16, true);
+    offset += 2;
+    writeString("data");
+    view.setUint32(offset, buffer.length * numOfChan * 2, true);
+    offset += 4;
 
-    for (let i = 0; i < numOfChan; i++) channels.push(buffer.getChannelData(i));
-
-    while (pos < length) {
-      for (let i = 0; i < numOfChan; i++) {
-        let sample = Math.max(-1, Math.min(1, channels[i][offset]));
-        view.setInt16(
-          pos,
-          sample < 0 ? sample * 0x8000 : sample * 0x7fff,
-          true
-        );
-        pos += 2;
-      }
-      offset++;
+    // PCM samples
+    const channels = [];
+    for (let i = 0; i < numOfChan; i++) {
+      channels.push(buffer.getChannelData(i));
     }
-
+    let interleaved = new Float32Array(buffer.length * numOfChan);
+    for (let i = 0; i < buffer.length; i++) {
+      for (let c = 0; c < numOfChan; c++) {
+        interleaved[i * numOfChan + c] = channels[c][i];
+      }
+    }
+    let idx = 44;
+    const volume = 1;
+    for (let i = 0; i < interleaved.length; i++) {
+      let s = Math.max(-1, Math.min(1, interleaved[i] * volume));
+      view.setInt16(idx, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      idx += 2;
+    }
     return bufferArray;
-  }
+  };
 
+  // 🔹 3. Start Recording
   const startRecording = async () => {
+    setRecognizedText("");
+    setHighlightedText("");
+    await fetchQuranText();
+
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaRecorderRef.current = new MediaRecorder(stream);
-    chunksRef.current = [];
+    audioChunksRef.current = [];
 
-    mediaRecorderRef.current.ondataavailable = (e) => {
-      chunksRef.current.push(e.data);
+    mediaRecorderRef.current.ondataavailable = (event) => {
+      audioChunksRef.current.push(event.data);
     };
 
     mediaRecorderRef.current.onstop = async () => {
-      const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+      const webmBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const wavBlob = await webmToWav(webmBlob);
 
-      setDebug(`WebM size: ${blob.size}`);
+      const formData = new FormData();
+      formData.append("file", wavBlob, "speech.wav");
 
-      const wavBlob = await convertToWav(blob);
+      // 🔹 4. Send to Wit.ai
+      const res = await fetch("https://api.wit.ai/speech?v=20230215", {
+        method: "POST",
+        headers: { Authorization: "Bearer YOUR_WITAI_TOKEN" },
+        body: wavBlob,
+      });
 
-      setDebug((prev) => prev + ` | WAV size: ${wavBlob.size}`);
+      const text = await res.text();
+      console.log("🔍 Wit.ai Raw:", text);
 
       try {
-        const res = await fetch(WIT_API, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${WIT_TOKEN}`,
-            "Content-Type": "audio/wav",
-          },
-          body: wavBlob,
-        });
+        const parsed = JSON.parse(text);
+        const finalText = parsed.text || "";
+        setRecognizedText(finalText);
 
-        const text = await res.text();
-        setDebug((prev) => prev + ` | Raw: ${text}`);
-
-        const lines = text.split("\n").filter((l) => l.trim() !== "");
-
-        let finalTranscript = "";
-        let liveTranscript = "";
-
-        // مرّ على كل سطر JSON
-        lines.forEach((line) => {
-          try {
-            const data = JSON.parse(line);
-
-            // تحديث النص الحي من PARTIAL
-            if (data.type === "PARTIAL_TRANSCRIPTION") {
-              liveTranscript = data.text;
-              setTranscript(liveTranscript); // عرض النص حي
-            }
-
-            // حفظ النهائي
-            if (data.type === "FINAL_TRANSCRIPTION") {
-              finalTranscript = data.text;
-            }
-          } catch (err) {
-            // تجاهل أي سطر مش JSON
-          }
-        });
-
-        // لو في نص نهائي، خليه هو الأساس
-        if (finalTranscript) {
-          setTranscript(finalTranscript);
-        } else if (!liveTranscript) {
-          setTranscript("❌ مفيش كلام متعرف عليه");
+        // 🔹 5. Highlight Quran match
+        if (quranText && finalText) {
+          const regex = new RegExp(`(${finalText})`, "gi");
+          const highlighted = quranText.replace(regex, `<mark>$1</mark>`);
+          setHighlightedText(highlighted);
         }
       } catch (err) {
-        setTranscript("❌ حصل Error");
-        setDebug("Fetch Error: " + err.message);
+        console.error("❌ JSON parse error:", err);
       }
     };
 
     mediaRecorderRef.current.start();
+    setIsRecording(true);
+  };
 
-    setTranscript("🎤 جاري التسجيل...");
-
-    setTimeout(() => {
-      mediaRecorderRef.current.stop();
-    }, 5000); // زودتها 5 ثواني
+  // 🔹 6. Stop Recording
+  const stopRecording = () => {
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
   };
 
   return (
     <div className="p-6 text-center">
-      <h1 className="text-xl font-bold mb-4">🎤 Quran Recitation App</h1>
-      <button
-        onClick={startRecording}
-        className="px-6 py-2 bg-blue-600 text-white rounded-lg"
-      >
-        ▶️ Start Recording
-      </button>
-      <h1 className="mt-6 text-green-600 font-bold text-2xl">{transcript}</h1>
+      <h1 className="text-2xl font-bold mb-4">🎤 Quran Recitation App</h1>
 
-      <div className="mt-4 p-2 bg-gray-200 text-sm text-left break-words">
-        <strong>🔍 Debug:</strong>
-        <p>{debug}</p>
-      </div>
+      <button
+        onClick={isRecording ? stopRecording : startRecording}
+        className={`px-6 py-2 rounded text-white ${
+          isRecording ? "bg-red-600" : "bg-green-600"
+        }`}
+      >
+        {isRecording ? "⏹ Stop Recording" : "▶ Start Recording"}
+      </button>
+
+      <p className="mt-4 text-gray-700">
+        {recognizedText
+          ? `✅ متعرف عليه: ${recognizedText}`
+          : "❌ مفيش كلام متعرف عليه"}
+      </p>
+
+      <div
+        className="mt-6 p-4 border rounded text-right leading-loose"
+        dir="rtl"
+        dangerouslySetInnerHTML={{
+          __html: highlightedText || quranText || "📖 جاري تحميل النص...",
+        }}
+      />
     </div>
   );
 }
-
-export default App;
