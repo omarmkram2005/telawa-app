@@ -27,6 +27,21 @@ function App() {
     fetchPage();
   }, [pageNumber]);
 
+  // دالة لحساب نسبة التشابه
+  const similarity = (s1, s2) => {
+    s1 = s1.replace(/[^\u0600-\u06FF ]/g, ""); // إزالة غير العربي
+    s2 = s2.replace(/[^\u0600-\u06FF ]/g, "");
+    const words1 = s1.split(" ");
+    const words2 = s2.split(" ");
+    let matches = 0;
+
+    words1.forEach((w, i) => {
+      if (words2[i] && words2[i].includes(w)) matches++;
+    });
+
+    return matches / Math.max(words1.length, words2.length);
+  };
+
   // تفعيل التعرف على الصوت
   useEffect(() => {
     if (!("webkitSpeechRecognition" in window)) {
@@ -37,7 +52,7 @@ function App() {
     const rec = new window.webkitSpeechRecognition();
     rec.lang = "ar-SA";
     rec.continuous = true;
-    rec.interimResults = true;
+    rec.interimResults = false;
 
     rec.onresult = (event) => {
       const transcript =
@@ -45,7 +60,9 @@ function App() {
       if (ayahs.length > 0 && currentIndex < ayahs.length) {
         const currentAyah = ayahs[currentIndex].text.trim();
 
-        if (transcript === currentAyah) {
+        const score = similarity(transcript, currentAyah);
+
+        if (score > 0.8) {
           document.getElementById(`ayah-${currentIndex}`).style.color = "green";
           setCurrentIndex((prev) => prev + 1);
         } else {
@@ -54,8 +71,13 @@ function App() {
       }
     };
 
+    // منع الوقوف المفاجئ
+    rec.onend = () => {
+      if (isRecording) rec.start();
+    };
+
     setRecognition(rec);
-  }, [ayahs, currentIndex]);
+  }, [ayahs, currentIndex, isRecording]);
 
   const toggleRecording = () => {
     if (!recognition) return;
