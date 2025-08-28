@@ -1,141 +1,136 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState, useRef } from "react";
 
-const App = () => {
-  const [pageNumber, setPageNumber] = useState(1);
+function App() {
+  const [page, setPage] = useState(1);
   const [ayahs, setAyahs] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [recognition, setRecognition] = useState(null);
-  const [currentAyahIndex, setCurrentAyahIndex] = useState(0);
-  const [results, setResults] = useState([]);
+  const [currentTranscript, setCurrentTranscript] = useState("");
   const [errors, setErrors] = useState(0);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
 
-  // تحميل الصفحة من API
-  const fetchPage = async (page) => {
-    try {
-      const response = await fetch(
-        `https://api.alquran.cloud/v1/page/${page}/quran-uthmani`
-      );
-      const data = await response.json();
-      if (data.status === "OK") {
-        setAyahs(data.data.ayahs);
-        setCurrentAyahIndex(0);
-        setResults([]);
-        setErrors(0);
-      }
-    } catch (err) {
-      console.error("Error fetching page:", err);
-    }
-  };
-
+  // 1. جلب بيانات القرآن من API
   useEffect(() => {
-    fetchPage(pageNumber);
-  }, [pageNumber]);
+    fetch(`https://api.alquran.cloud/v1/page/${page}/quran-uthmani`)
+      .then((res) => res.json())
+      .then((data) => {
+        setAyahs(data.data.ayahs);
+      });
+  }, [page]);
 
-  // بدء التسجيل الصوتي
-  const startRecognition = () => {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("المتصفح لا يدعم التعرف على الصوت");
-      return;
-    }
+  // 2. بدء التسجيل
+  const startRecording = async () => {
+    setIsRecording(true);
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorderRef.current = new MediaRecorder(stream, {
+      mimeType: "audio/webm",
+    });
 
-    const recog = new SpeechRecognition();
-    recog.lang = "ar-SA";
-    recog.continuous = true;
-    recog.interimResults = false;
-
-    recog.onresult = (event) => {
-      const transcript =
-        event.results[event.results.length - 1][0].transcript.trim();
-      console.log("📢 قلت:", transcript);
-
-      const expected = ayahs[currentAyahIndex]?.text || "";
-      const isCorrect = transcript.includes(expected);
-
-      if (isCorrect) {
-        setResults((prev) => [...prev, { ayah: expected, correct: true }]);
-        setCurrentAyahIndex((prev) => prev + 1);
-      } else {
-        setResults((prev) => [...prev, { ayah: expected, correct: false }]);
-        setErrors((prev) => prev + 1);
+    mediaRecorderRef.current.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        chunksRef.current.push(event.data);
       }
     };
 
-    recog.start();
-    setRecognition(recog);
-    setIsRecording(true);
+    mediaRecorderRef.current.onstop = async () => {
+      const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
+      chunksRef.current = [];
+      await sendToWit(audioBlob);
+      if (isRecording) startRecording(); // restart auto
+    };
+
+    mediaRecorderRef.current.start();
+    setTimeout(() => {
+      if (
+        mediaRecorderRef.current &&
+        mediaRecorderRef.current.state === "recording"
+      ) {
+        mediaRecorderRef.current.stop();
+      }
+    }, 5000); // كل 5 ثواني نبعته لـ Wit.ai
   };
 
-  // إيقاف التسجيل
-  const stopRecognition = () => {
-    if (recognition) recognition.stop();
+  // 3. وقف التسجيل
+  const stopRecording = () => {
     setIsRecording(false);
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  // 4. إرسال الصوت لـ Wit.ai
+  const sendToWit = async (audioBlob) => {
+    const res = await fetch("https://api.wit.ai/speech?v=20240331", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
+        "Content-Type": "audio/webm",
+      },
+      body: audioBlob,
+    });
+
+    const data = await res.json();
+    if (data.text) {
+      setCurrentTranscript(data.text);
+      compareTranscript(data.text);
+    }
+  };
+
+  // 5. مقارنة القراءة بالآية
+  const compareTranscript = (transcript) => {
+    if (!ayahs.length) return;
+
+    let expectedWords = ayahs
+      .map((a) => a.text)
+      .join(" ")
+      .split(" ");
+    let spokenWords = transcript.split(" ");
+
+    let wrongs = 0;
+    expectedWords.forEach((word, i) => {
+      if (spokenWords[i] && spokenWords[i] === word) {
+        // صح
+      } else if (spokenWords[i]) {
+        wrongs++;
+      }
+    });
+
+    setErrors((prev) => prev + wrongs);
   };
 
   return (
-    <div className="p-4 text-center">
-      <h1 className="text-2xl font-bold mb-4">📖 تطبيق تلاوة القرآن</h1>
+    <div style={{ direction: "rtl", padding: "20px", fontFamily: "Cairo" }}>
+      <h1>📖 تلاوة القرآن</h1>
 
-      {/* أزرار التنقل بين الصفحات */}
-      <div className="flex gap-2 justify-center mb-4">
-        <button
-          className="bg-gray-300 px-3 py-1 rounded"
-          onClick={() => setPageNumber((prev) => Math.max(prev - 1, 1))}
-        >
-          ⬅️ صفحة قبل
-        </button>
-        <span className="px-4 py-1 border rounded">الصفحة: {pageNumber}</span>
-        <button
-          className="bg-gray-300 px-3 py-1 rounded"
-          onClick={() => setPageNumber((prev) => prev + 1)}
-        >
-          صفحة بعد ➡️
-        </button>
+      <div>
+        <label>رقم الصفحة: </label>
+        <input
+          type="number"
+          value={page}
+          onChange={(e) => setPage(Number(e.target.value))}
+        />
       </div>
 
-      {/* عرض الآيات */}
-      <div className="border p-4 rounded text-right leading-loose">
-        {ayahs.map((ayah, index) => {
-          const result = results[index];
-          return (
-            <span
-              key={ayah.number}
-              className={`px-1 ${
-                result ? (result.correct ? "bg-green-200" : "bg-red-200") : ""
-              }`}
-            >
-              {ayah.text}{" "}
-            </span>
-          );
-        })}
+      <div>
+        {ayahs.map((a) => (
+          <p key={a.number}>{a.text}</p>
+        ))}
       </div>
 
-      {/* أزرار التسجيل */}
-      <div className="mt-4">
+      <div>
         {!isRecording ? (
-          <button
-            className="bg-green-500 text-white px-4 py-2 rounded"
-            onClick={startRecognition}
-          >
-            🎤 ابدأ التسجيل
-          </button>
+          <button onClick={startRecording}>🎤 ابدأ التسجيل</button>
         ) : (
-          <button
-            className="bg-red-500 text-white px-4 py-2 rounded"
-            onClick={stopRecognition}
-          >
-            ⏹️ أوقف التسجيل
-          </button>
+          <button onClick={stopRecording}>⏹️ أوقف التسجيل</button>
         )}
       </div>
 
-      {/* عرض النتيجة */}
-      <div className="mt-4">
-        <p>عدد الأخطاء: {errors}</p>
-      </div>
+      <h3>نص مقروء:</h3>
+      <p>{currentTranscript}</p>
+
+      <h3>عدد الأخطاء: {errors}</h3>
     </div>
   );
-};
+}
 
 export default App;
