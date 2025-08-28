@@ -114,18 +114,18 @@ const App = () => {
   );
 };
 
-const playSuccessSound = () => {
-  const audio = new Audio(
-    "https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3"
-  );
-  audio.play();
-};
+// const playSuccessSound = () => {
+//   const audio = new Audio(
+//     "https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3"
+//   );
+//   audio.play();
+// };
 
-const playErrorSound = () => {
-  const audio = new Audio(
-    "https://assets.mixkit.co/sfx/preview/mixkit-wrong-answer-fail-notification-946.mp3"
-  );
-  audio.play();
-};
+// const playErrorSound = () => {
+//   const audio = new Audio(
+//     "https://assets.mixkit.co/sfx/preview/mixkit-wrong-answer-fail-notification-946.mp3"
+//   );
+//   audio.play();
+// };
 
 export default App;
