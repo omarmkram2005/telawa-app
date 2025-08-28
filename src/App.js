@@ -40,11 +40,12 @@ const App = () => {
     const recognition = new (window.SpeechRecognition ||
       window.webkitSpeechRecognition)();
     recognition.lang = "ar-SA";
-    recognition.interimResults = false;
+    recognition.interimResults = true; // تفعيل النتائج المؤقتة
+    recognition.continuous = true; // تفعيل التعرف المستمر
 
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      checkRecitation(transcript);
+      const transcript = event.results[event.results.length - 1][0].transcript;
+      analyzeRecitation(transcript);
     };
 
     recognition.onend = () => {
@@ -54,42 +55,40 @@ const App = () => {
     recognition.start();
   };
 
-  const handleStopRecitation = () => {
-    setIsRecording(false);
-  };
-
-  const checkRecitation = (text) => {
+  const analyzeRecitation = (text) => {
     if (!quranData) return;
 
     const currentVerseData = quranData.ayahs[currentVerse - 1];
 
-    if (text === currentVerseData.text) {
-      setRecognizedWords((prev) => ({
-        ...prev,
-        [`${currentVerse}-${currentVerseData.number}`]: "correct",
-      }));
-      playSuccessSound();
-      if (currentVerse < quranData.ayahs.length) {
-        setCurrentVerse(currentVerse + 1);
-        setProgress((currentVerse / quranData.ayahs.length) * 100);
-      } else {
-        // الانتقال للصفحة التالية
-        if (selectedPage < 604) {
-          setSelectedPage(selectedPage + 1);
-          setCurrentVerse(1);
+    // تحليل النص المدخل
+    const words = text.split(" ");
+    words.forEach((word, index) => {
+      if (index < currentVerseData.text.split(" ").length) {
+        const correctWord = currentVerseData.text.split(" ")[index];
+        if (word === correctWord) {
+          setRecognizedWords((prev) => ({
+            ...prev,
+            [`${currentVerse}-${index + 1}`]: "correct",
+          }));
+        } else {
+          setRecognizedWords((prev) => ({
+            ...prev,
+            [`${currentVerse}-${index + 1}`]: "incorrect",
+          }));
+          setErrors((prev) => [
+            ...prev,
+            { verse: currentVerseData.number, incorrectWord: word },
+          ]);
         }
       }
-    } else {
-      setRecognizedWords((prev) => ({
-        ...prev,
-        [`${currentVerse}-${currentVerseData.number}`]: "incorrect",
-      }));
-      setErrors((prev) => [
-        ...prev,
-        { verse: currentVerseData.number, incorrectWord: text },
-      ]);
-      playErrorSound();
-    }
+    });
+
+    // تحديث التقدم
+    setProgress((currentVerse / quranData.ayahs.length) * 100);
+  };
+
+  const handleStopRecitation = () => {
+    setIsRecording(false);
   };
 
   return (
