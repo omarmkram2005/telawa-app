@@ -25,7 +25,9 @@ export default function App() {
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
+      mediaRecorderRef.current = new MediaRecorder(stream, {
+        mimeType: "audio/webm",
+      });
       audioChunksRef.current = [];
 
       mediaRecorderRef.current.ondataavailable = (event) => {
@@ -66,26 +68,96 @@ export default function App() {
     setRecording(false);
   };
 
+  // تحويل webm → wav
+  const convertToWav = async (webmBlob) => {
+    const arrayBuffer = await webmBlob.arrayBuffer();
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    const wavBuffer = audioBufferToWav(audioBuffer);
+    return new Blob([wavBuffer], { type: "audio/wav" });
+  };
+
+  const audioBufferToWav = (buffer) => {
+    let numOfChan = buffer.numberOfChannels,
+      length = buffer.length * numOfChan * 2 + 44,
+      bufferArray = new ArrayBuffer(length),
+      view = new DataView(bufferArray),
+      channels = [],
+      sampleRate = buffer.sampleRate,
+      offset = 0,
+      pos = 0;
+
+    const setUint16 = (data) => {
+      view.setUint16(pos, data, true);
+      pos += 2;
+    };
+
+    const setUint32 = (data) => {
+      view.setUint32(pos, data, true);
+      pos += 4;
+    };
+
+    // RIFF chunk descriptor
+    setUint32(0x46464952); // "RIFF"
+    setUint32(length - 8); // file length - 8
+    setUint32(0x45564157); // "WAVE"
+
+    // FMT sub-chunk
+    setUint32(0x20746d66); // "fmt "
+    setUint32(16); // size = 16
+    setUint16(1); // PCM
+    setUint16(numOfChan);
+    setUint32(sampleRate);
+    setUint32(sampleRate * 2 * numOfChan); // avg. bytes/sec
+    setUint16(numOfChan * 2); // block-align
+    setUint16(16); // 16-bit (hardcoded)
+
+    // data sub-chunk
+    setUint32(0x61746164); // "data"
+    setUint32(length - pos - 4);
+
+    // write interleaved data
+    for (let i = 0; i < buffer.numberOfChannels; i++) {
+      channels.push(buffer.getChannelData(i));
+    }
+
+    while (pos < length) {
+      for (let i = 0; i < numOfChan; i++) {
+        let sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
+        view.setInt16(
+          pos,
+          sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+          true
+        );
+        pos += 2;
+      }
+      offset++;
+    }
+
+    return bufferArray;
+  };
+
   // معالجة الصوت وإرساله لـ Wit.ai
   const processAudio = async () => {
-    const blob = new Blob(audioChunksRef.current, { type: "audio/webm" }); // جرب webm
+    const webmBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
     audioChunksRef.current = [];
 
-    const formData = new FormData();
-    formData.append("file", blob, "speech.webm");
+    const wavBlob = await convertToWav(webmBlob);
 
     try {
       const response = await fetch("https://api.wit.ai/speech?v=20210928", {
         method: "POST",
         headers: {
           Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
+          "Content-Type": "audio/wav",
         },
-        body: blob, // نبعت البودي مباشرة
+        body: wavBlob,
       });
 
       const text = await response.text();
       console.log("Wit.ai response:", text);
-      setTranscript(text); // علشان يظهر في h1
+      setTranscript(text);
     } catch (err) {
       console.error("Wit.ai error:", err);
     }
