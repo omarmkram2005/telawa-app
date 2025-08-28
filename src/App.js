@@ -4,12 +4,12 @@ export default function App() {
   const [recording, setRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [quranText, setQuranText] = useState([]);
+  const [pageNumber, setPageNumber] = useState(2);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const intervalRef = useRef(null);
-  const pageNumber = 2; // صفحة للتجربة
 
-  // جلب بيانات الصفحة من API
+  // جلب بيانات الصفحة
   useEffect(() => {
     fetch(`https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthman`)
       .then((res) => res.json())
@@ -19,7 +19,7 @@ export default function App() {
         }
       })
       .catch((err) => console.error(err));
-  }, []);
+  }, [pageNumber]);
 
   // بدء التسجيل
   const startRecording = async () => {
@@ -42,7 +42,7 @@ export default function App() {
 
       mediaRecorderRef.current.start();
 
-      // تقسيم التسجيل كل ثانيتين
+      // كل 5 ثواني يقسم التسجيل
       intervalRef.current = setInterval(() => {
         if (
           mediaRecorderRef.current &&
@@ -51,7 +51,7 @@ export default function App() {
           mediaRecorderRef.current.stop();
           mediaRecorderRef.current.start();
         }
-      }, 2000);
+      }, 5000);
 
       setRecording(true);
     } catch (err) {
@@ -124,7 +124,7 @@ export default function App() {
 
     while (pos < length) {
       for (let i = 0; i < numOfChan; i++) {
-        let sample = Math.max(-1, Math.min(1, channels[i][offset])); // clamp
+        let sample = Math.max(-1, Math.min(1, channels[i][offset]));
         view.setInt16(
           pos,
           sample < 0 ? sample * 0x8000 : sample * 0x7fff,
@@ -138,7 +138,7 @@ export default function App() {
     return bufferArray;
   };
 
-  // معالجة الصوت وإرساله لـ Wit.ai
+  // إرسال الصوت لـ Wit.ai
   const processAudio = async () => {
     const webmBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
     audioChunksRef.current = [];
@@ -155,24 +155,57 @@ export default function App() {
         body: wavBlob,
       });
 
-      const text = await response.text();
-      console.log("Wit.ai response:", text);
-      setTranscript(text);
+      const json = await response.json();
+      console.log("Wit.ai response:", json);
+
+      if (json.text) {
+        setTranscript(json.text);
+        checkAyahMatch(json.text);
+      }
     } catch (err) {
       console.error("Wit.ai error:", err);
+    }
+  };
+
+  // التحقق من التطابق
+  const checkAyahMatch = (spoken) => {
+    const normalizedSpoken = spoken.replace(/[\u064B-\u0652]/g, ""); // إزالة التشكيل
+    const matchIndex = quranText.findIndex((ayah) =>
+      ayah.text.replace(/[\u064B-\u0652]/g, "").includes(normalizedSpoken)
+    );
+
+    if (matchIndex !== -1) {
+      const newQuranText = quranText.map((ayah, idx) => ({
+        ...ayah,
+        match: idx === matchIndex,
+      }));
+      setQuranText(newQuranText);
+
+      // أوتوماتيك: لو آخر آية، انتقل للصفحة التالية
+      if (matchIndex === quranText.length - 1) {
+        setPageNumber((prev) => prev + 1);
+      }
     }
   };
 
   return (
     <div className="p-4">
       <h1>📖 Quran Page {pageNumber}</h1>
+
       {quranText.map((ayah) => (
-        <p key={ayah.number} style={{ direction: "rtl", fontSize: "20px" }}>
+        <p
+          key={ayah.number}
+          style={{
+            direction: "rtl",
+            fontSize: "20px",
+            background: ayah.match ? "lightgreen" : "transparent",
+          }}
+        >
           {ayah.text}
         </p>
       ))}
 
-      <div className="mt-4">
+      <div className="mt-4 space-x-2">
         {!recording ? (
           <button
             onClick={startRecording}
@@ -188,9 +221,22 @@ export default function App() {
             ⏹️ إيقاف التسجيل
           </button>
         )}
+
+        <button
+          onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
+          className="bg-gray-500 text-white px-3 py-2 rounded"
+        >
+          ◀️ السابق
+        </button>
+        <button
+          onClick={() => setPageNumber((p) => p + 1)}
+          className="bg-gray-500 text-white px-3 py-2 rounded"
+        >
+          التالي ▶️
+        </button>
       </div>
 
-      <h1 className="mt-4">🎤 Wit.ai Response:</h1>
+      <h2 className="mt-4">🎤 النص المتعرف عليه:</h2>
       <pre style={{ whiteSpace: "pre-wrap" }}>{transcript}</pre>
     </div>
   );
