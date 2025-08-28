@@ -1,24 +1,22 @@
 import React, { useState, useRef } from "react";
 
 const WIT_API = "https://api.wit.ai/speech?v=20240828";
-const WIT_TOKEN = "WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7"; // السيرفر توكن بتاعك
+const WIT_TOKEN = "WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7";
 
 function App() {
-  const [transcript, setTranscript] = useState("");
+  const [transcript, setTranscript] = useState("مستني تسجيل 🎤");
+  const [debug, setDebug] = useState(""); // عشان نعرض الريسبونس
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  // Helper: تحويل WebM → WAV
   const convertToWav = async (blob) => {
     const arrayBuffer = await blob.arrayBuffer();
     const audioCtx = new AudioContext();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
     const wavBuffer = audioBufferToWav(audioBuffer);
     return new Blob([wavBuffer], { type: "audio/wav" });
   };
 
-  // تحويل AudioBuffer → WAV
   function audioBufferToWav(buffer) {
     const numOfChan = buffer.numberOfChannels;
     const length = buffer.length * numOfChan * 2 + 44;
@@ -38,11 +36,10 @@ function App() {
     }
 
     // WAV header
-    setUint32(0x46464952); // "RIFF"
+    setUint32(0x46464952);
     setUint32(length - 8);
-    setUint32(0x45564157); // "WAVE"
-
-    setUint32(0x20746d66); // "fmt "
+    setUint32(0x45564157);
+    setUint32(0x20746d66);
     setUint32(16);
     setUint16(1);
     setUint16(numOfChan);
@@ -50,8 +47,7 @@ function App() {
     setUint32(buffer.sampleRate * 2 * numOfChan);
     setUint16(numOfChan * 2);
     setUint16(16);
-
-    setUint32(0x61746164); // "data"
+    setUint32(0x61746164);
     setUint32(length - pos - 4);
 
     for (let i = 0; i < numOfChan; i++) channels.push(buffer.getChannelData(i));
@@ -72,7 +68,6 @@ function App() {
     return bufferArray;
   }
 
-  // بدء التسجيل
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaRecorderRef.current = new MediaRecorder(stream);
@@ -84,29 +79,48 @@ function App() {
 
     mediaRecorderRef.current.onstop = async () => {
       const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+
+      setDebug(`WebM size: ${blob.size}`);
+
       const wavBlob = await convertToWav(blob);
 
-      // إرسال لـ Wit
-      const res = await fetch(WIT_API, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${WIT_TOKEN}`,
-          "Content-Type": "audio/wav",
-        },
-        body: wavBlob,
-      });
+      setDebug((prev) => prev + ` | WAV size: ${wavBlob.size}`);
 
-      const data = await res.json();
-      console.log("🎤 Wit.ai Response:", data);
-      setTranscript(data.text || "❌ مفيش كلام متعرف عليه");
+      try {
+        const res = await fetch(WIT_API, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${WIT_TOKEN}`,
+            "Content-Type": "audio/wav",
+          },
+          body: wavBlob,
+        });
+
+        const text = await res.text();
+
+        setDebug((prev) => prev + ` | Raw: ${text}`);
+
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (err) {
+          setDebug((prev) => prev + " | JSON parse failed");
+        }
+
+        setTranscript(data?.text || "❌ مفيش كلام متعرف عليه");
+      } catch (err) {
+        setTranscript("❌ حصل Error");
+        setDebug("Fetch Error: " + err.message);
+      }
     };
 
     mediaRecorderRef.current.start();
 
-    // تسجيل 3 ثواني وبعدين وقف
+    setTranscript("🎤 جاري التسجيل...");
+
     setTimeout(() => {
       mediaRecorderRef.current.stop();
-    }, 3000);
+    }, 5000); // زودتها 5 ثواني
   };
 
   return (
@@ -119,6 +133,11 @@ function App() {
         ▶️ Start Recording
       </button>
       <h1 className="mt-6 text-green-600 font-bold text-2xl">{transcript}</h1>
+
+      <div className="mt-4 p-2 bg-gray-200 text-sm text-left break-words">
+        <strong>🔍 Debug:</strong>
+        <p>{debug}</p>
+      </div>
     </div>
   );
 }
