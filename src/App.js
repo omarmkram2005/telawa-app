@@ -102,18 +102,34 @@ function App() {
         const lines = text.split("\n").filter((l) => l.trim() !== "");
 
         let finalTranscript = "";
+        let liveTranscript = "";
+
+        // مرّ على كل سطر JSON
         lines.forEach((line) => {
           try {
             const data = JSON.parse(line);
+
+            // تحديث النص الحي من PARTIAL
+            if (data.type === "PARTIAL_TRANSCRIPTION") {
+              liveTranscript = data.text;
+              setTranscript(liveTranscript); // عرض النص حي
+            }
+
+            // حفظ النهائي
             if (data.type === "FINAL_TRANSCRIPTION") {
               finalTranscript = data.text;
             }
           } catch (err) {
-            setDebug((prev) => prev + " | JSON parse failed line");
+            // تجاهل أي سطر مش JSON
           }
         });
 
-        setTranscript(finalTranscript || "❌ مفيش كلام متعرف عليه");
+        // لو في نص نهائي، خليه هو الأساس
+        if (finalTranscript) {
+          setTranscript(finalTranscript);
+        } else if (!liveTranscript) {
+          setTranscript("❌ مفيش كلام متعرف عليه");
+        }
       } catch (err) {
         setTranscript("❌ حصل Error");
         setDebug("Fetch Error: " + err.message);
