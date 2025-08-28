@@ -4,98 +4,98 @@ function App() {
   const [page, setPage] = useState(1);
   const [ayahs, setAyahs] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [currentTranscript, setCurrentTranscript] = useState("");
-  const [errors, setErrors] = useState(0);
+  const [transcript, setTranscript] = useState("");
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  // 1. جلب بيانات القرآن من API
+  // 1. جلب الصفحة من API
   useEffect(() => {
     fetch(`https://api.alquran.cloud/v1/page/${page}/quran-uthmani`)
       .then((res) => res.json())
-      .then((data) => {
-        setAyahs(data.data.ayahs);
-      });
+      .then((data) => setAyahs(data.data.ayahs));
   }, [page]);
+
+  // تحويل Blob -> WAV
+  const blobToWav = async (blob) => {
+    const arrayBuffer = await blob.arrayBuffer();
+    return new Blob([arrayBuffer], { type: "audio/wav" });
+  };
 
   // 2. بدء التسجيل
   const startRecording = async () => {
     setIsRecording(true);
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorderRef.current = new MediaRecorder(stream, {
-      mimeType: "audio/webm",
-    });
+    mediaRecorderRef.current = new MediaRecorder(stream);
 
     mediaRecorderRef.current.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        chunksRef.current.push(event.data);
-      }
+      if (event.data.size > 0) chunksRef.current.push(event.data);
     };
 
     mediaRecorderRef.current.onstop = async () => {
       const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
       chunksRef.current = [];
-      await sendToWit(audioBlob);
-      if (isRecording) startRecording(); // restart auto
+      const wavBlob = await blobToWav(audioBlob);
+      await sendToWit(wavBlob);
+
+      if (isRecording) startRecording(); // إعادة التسجيل تلقائي
     };
 
     mediaRecorderRef.current.start();
     setTimeout(() => {
-      if (
-        mediaRecorderRef.current &&
-        mediaRecorderRef.current.state === "recording"
-      ) {
+      if (mediaRecorderRef.current.state === "recording") {
         mediaRecorderRef.current.stop();
       }
-    }, 5000); // كل 5 ثواني نبعته لـ Wit.ai
+    }, 5000); // كل 5 ثواني يقطع ويبعت
   };
 
   // 3. وقف التسجيل
   const stopRecording = () => {
     setIsRecording(false);
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-    }
+    if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
   };
 
-  // 4. إرسال الصوت لـ Wit.ai
+  // 4. إرسال لـ Wit.ai
   const sendToWit = async (audioBlob) => {
-    const res = await fetch("https://api.wit.ai/speech?v=20240331", {
+    const res = await fetch("https://api.wit.ai/speech?v=20240828", {
       method: "POST",
       headers: {
         Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
-        "Content-Type": "audio/webm",
+        "Content-Type": "audio/wav",
       },
       body: audioBlob,
     });
 
     const data = await res.json();
     if (data.text) {
-      setCurrentTranscript(data.text);
-      compareTranscript(data.text);
+      setTranscript(data.text);
+    } else {
+      console.log("Wit.ai response:", data);
     }
   };
 
-  // 5. مقارنة القراءة بالآية
-  const compareTranscript = (transcript) => {
-    if (!ayahs.length) return;
-
-    let expectedWords = ayahs
-      .map((a) => a.text)
-      .join(" ")
-      .split(" ");
-    let spokenWords = transcript.split(" ");
-
-    let wrongs = 0;
-    expectedWords.forEach((word, i) => {
-      if (spokenWords[i] && spokenWords[i] === word) {
-        // صح
-      } else if (spokenWords[i]) {
-        wrongs++;
-      }
+  // 5. مقارنة الكلمات
+  const renderAyah = (ayah) => {
+    const spokenWords = transcript.split(" ");
+    return ayah.text.split(" ").map((word, i) => {
+      const correct = spokenWords[i] === word;
+      return (
+        <span
+          key={i}
+          style={{
+            backgroundColor: spokenWords[i]
+              ? correct
+                ? "lightgreen"
+                : "salmon"
+              : "transparent",
+            margin: "2px",
+            padding: "2px",
+            borderRadius: "4px",
+          }}
+        >
+          {word}{" "}
+        </span>
+      );
     });
-
-    setErrors((prev) => prev + wrongs);
   };
 
   return (
@@ -113,7 +113,7 @@ function App() {
 
       <div>
         {ayahs.map((a) => (
-          <p key={a.number}>{a.text}</p>
+          <p key={a.number}>{renderAyah(a)}</p>
         ))}
       </div>
 
@@ -125,10 +125,8 @@ function App() {
         )}
       </div>
 
-      <h3>نص مقروء:</h3>
-      <p>{currentTranscript}</p>
-
-      <h3>عدد الأخطاء: {errors}</h3>
+      <h3>النص اللي اتعرف عليه Wit.ai:</h3>
+      <p>{transcript}</p>
     </div>
   );
 }
