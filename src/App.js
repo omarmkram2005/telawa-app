@@ -83,7 +83,7 @@ function App() {
   return (
     <div className="App" style={{ padding: 20, direction: "rtl" }}>
       <h2>القرآن الكريم - صفحة {pageNumber}</h2>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 20 }} onClick={setPageNumber}>
         {ayahs.map((ayah) => (
           <p key={ayah.number} style={{ fontSize: "20px", lineHeight: "2" }}>
             {ayah.text}
