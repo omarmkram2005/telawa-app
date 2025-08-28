@@ -1,110 +1,123 @@
-import React, { useState, useEffect, useRef } from "react";
-
-const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition;
+import React, { useState, useEffect } from "react";
 
 function App() {
   const [pageNumber, setPageNumber] = useState(1);
   const [ayahs, setAyahs] = useState([]);
-  const [words, setWords] = useState([]);
-  const [currentWordIndex, setCurrentWordIndex] = useState(0);
-  const [results, setResults] = useState([]);
-  const [listening, setListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [recognition, setRecognition] = useState(null);
 
-  const recognitionRef = useRef(null);
-
-  // تحميل الصفحة
+  // تحميل الصفحة من API
   useEffect(() => {
     const fetchPage = async () => {
-      const res = await fetch(
-        `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthman`
-      );
-      const data = await res.json();
-      setAyahs(data.data.ayahs);
-
-      // نحول النصوص لكلمات منفصلة
-      const allWords = data.data.ayahs
-        .map((a) => a.text.split(" "))
-        .flat()
-        .filter((w) => w.trim() !== "");
-      setWords(allWords);
-      setResults(new Array(allWords.length).fill(null));
-      setCurrentWordIndex(0);
-    };
-    fetchPage();
-  }, [pageNumber]);
-
-  // إزالة التشكيل للمقارنة
-  const normalize = (text) =>
-    text.replace(/[\u064B-\u0652]/g, "").replace(/[^\u0621-\u064A ]/g, "");
-
-  // بدء التسجيل
-  const startListening = () => {
-    if (!SpeechRecognition) {
-      alert("المتصفح لا يدعم التعرف على الصوت");
-      return;
-    }
-
-    recognitionRef.current = new SpeechRecognition();
-    recognitionRef.current.lang = "ar-SA";
-    recognitionRef.current.continuous = true;
-    recognitionRef.current.interimResults = false;
-
-    recognitionRef.current.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
-      console.log("🎤", transcript);
-
-      const spoken = normalize(transcript).split(" ");
-      const expected = normalize(words[currentWordIndex] || "");
-
-      if (spoken.includes(expected)) {
-        // ✅ صحيح
-        const updated = [...results];
-        updated[currentWordIndex] = true;
-        setResults(updated);
-        setCurrentWordIndex((prev) => prev + 1);
-      } else {
-        // ❌ خطأ
-        const updated = [...results];
-        updated[currentWordIndex] = false;
-        setResults(updated);
+      try {
+        const res = await fetch(
+          `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthmani`
+        );
+        const data = await res.json();
+        if (data.code === 200) {
+          setAyahs(data.data.ayahs);
+          setCurrentIndex(0);
+        }
+      } catch (err) {
+        console.error("Error fetching Quran data:", err);
       }
     };
 
-    recognitionRef.current.onstart = () => setListening(true);
-    recognitionRef.current.onend = () => setListening(false);
+    fetchPage();
+  }, [pageNumber]);
 
-    recognitionRef.current.start();
+  // تفعيل التعرف على الصوت
+  useEffect(() => {
+    if (!("webkitSpeechRecognition" in window)) {
+      alert("المتصفح لا يدعم التعرف على الصوت.");
+      return;
+    }
+
+    const rec = new window.webkitSpeechRecognition();
+    rec.lang = "ar-SA";
+    rec.continuous = true;
+    rec.interimResults = true;
+
+    rec.onresult = (event) => {
+      const transcript =
+        event.results[event.results.length - 1][0].transcript.trim();
+      if (ayahs.length > 0 && currentIndex < ayahs.length) {
+        const currentAyah = ayahs[currentIndex].text.trim();
+
+        if (transcript === currentAyah) {
+          document.getElementById(`ayah-${currentIndex}`).style.color = "green";
+          setCurrentIndex((prev) => prev + 1);
+        } else {
+          document.getElementById(`ayah-${currentIndex}`).style.color = "red";
+        }
+      }
+    };
+
+    setRecognition(rec);
+  }, [ayahs, currentIndex]);
+
+  const toggleRecording = () => {
+    if (!recognition) return;
+
+    if (isRecording) {
+      recognition.stop();
+      setIsRecording(false);
+    } else {
+      recognition.start();
+      setIsRecording(true);
+    }
   };
 
   return (
-    <div className="p-6 text-right">
+    <div className="p-6 text-center">
       <h1 className="text-2xl font-bold mb-4">📖 صفحة {pageNumber}</h1>
 
+      {/* التنقل بين الصفحات */}
+      <div className="flex justify-center space-x-2 mb-4">
+        <button
+          onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
+          className="px-4 py-2 bg-gray-300 rounded"
+        >
+          ⬅️ السابق
+        </button>
+        <input
+          type="number"
+          value={pageNumber}
+          onChange={(e) => setPageNumber(Number(e.target.value))}
+          min="1"
+          max="604"
+          className="border px-2 py-1 w-20 text-center"
+        />
+        <button
+          onClick={() => setPageNumber((p) => Math.min(604, p + 1))}
+          className="px-4 py-2 bg-gray-300 rounded"
+        >
+          التالي ➡️
+        </button>
+      </div>
+
+      {/* زر التسجيل */}
       <button
-        onClick={startListening}
-        className={`px-4 py-2 rounded ${
-          listening ? "bg-red-500" : "bg-green-500"
-        } text-white`}
+        onClick={toggleRecording}
+        className={`px-6 py-2 rounded font-bold ${
+          isRecording ? "bg-red-500 text-white" : "bg-green-500 text-white"
+        }`}
       >
-        {listening ? "🎙️ جاري الاستماع..." : "🎤 ابدأ التلاوة"}
+        {isRecording ? "⏹️ إيقاف" : "🎤 بدء التسجيل"}
       </button>
 
-      <div className="mt-6 leading-loose text-xl">
-        {words.map((word, i) => (
-          <span
-            key={i}
-            className={`px-1 ${
-              results[i] === true
-                ? "bg-green-300"
-                : results[i] === false
-                ? "bg-red-300"
-                : ""
-            }`}
-          >
-            {word}
-          </span>
-        ))}
+      {/* عرض الآيات */}
+      <div className="mt-6 space-y-2 text-xl leading-relaxed text-right">
+        {ayahs.length > 0 ? (
+          ayahs.map((ayah, index) => (
+            <p key={ayah.number} id={`ayah-${index}`} className="ayah">
+              {ayah.text}
+            </p>
+          ))
+        ) : (
+          <p>جارِ تحميل الصفحة...</p>
+        )}
       </div>
     </div>
   );
