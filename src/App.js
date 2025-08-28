@@ -119,7 +119,6 @@ export default function QuranRecitationApp() {
       }
     }
 
-    let index = 0;
     for (let i = 0; i < interleaved.length; i++, offset += 2) {
       let s = Math.max(-1, Math.min(1, interleaved[i]));
       view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
