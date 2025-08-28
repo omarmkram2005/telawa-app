@@ -1,115 +1,125 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 
-function App() {
-  const [ayahs, setAyahs] = useState([]);
-  const [pageNumber, setPageNumber] = useState(1);
+export default function App() {
   const [recording, setRecording] = useState(false);
-  const [witResponse, setWitResponse] = useState(""); // ✅ نعرض رد Wit هنا
+  const [transcript, setTranscript] = useState("");
+  const [quranText, setQuranText] = useState([]);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const intervalRef = useRef(null);
+  const pageNumber = 2; // صفحة للتجربة
 
-  // ✅ جلب الصفحة من API القرآن
+  // جلب بيانات الصفحة من API
   useEffect(() => {
-    const fetchPage = async () => {
-      try {
-        const res = await fetch(
-          `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthmani`
-        );
-        const data = await res.json();
-        setAyahs(data.data.ayahs);
-      } catch (err) {
-        console.error("Error fetching Quran page:", err);
-      }
-    };
-    fetchPage();
-  }, [pageNumber]);
+    fetch(`https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthman`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.data && data.data.ayahs) {
+          setQuranText(data.data.ayahs);
+        }
+      })
+      .catch((err) => console.error(err));
+  }, []);
 
-  // ✅ إرسال التسجيل إلى Wit.ai
-  const sendToWit = async (audioBlob) => {
-    try {
-      const res = await fetch("https://api.wit.ai/speech?v=20240801", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
-          "Content-Type": "audio/wav",
-        },
-        body: audioBlob,
-      });
-
-      const text = await res.text(); // 👈 Wit بيرجع نص (JSON أو Error)
-      setWitResponse(text); // 👈 نعرضه على الصفحة
-    } catch (err) {
-      console.error("Error sending to Wit:", err);
-      setWitResponse("Error: " + err.message);
-    }
-  };
-
-  // ✅ بدء التسجيل
+  // بدء التسجيل
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorderRef.current = new MediaRecorder(stream);
       audioChunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) {
-          audioChunksRef.current.push(e.data);
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
         }
       };
 
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, {
-          type: "audio/wav",
-        });
-        sendToWit(audioBlob); // 👈 ابعت التسجيل لـ Wit.ai
+      mediaRecorderRef.current.onstop = () => {
+        processAudio();
       };
 
-      mediaRecorder.start();
+      mediaRecorderRef.current.start();
+
+      // تقسيم التسجيل كل ثانيتين
+      intervalRef.current = setInterval(() => {
+        if (
+          mediaRecorderRef.current &&
+          mediaRecorderRef.current.state === "recording"
+        ) {
+          mediaRecorderRef.current.stop();
+          mediaRecorderRef.current.start();
+        }
+      }, 2000);
+
       setRecording(true);
     } catch (err) {
-      console.error("Error accessing mic:", err);
+      console.error("Microphone error:", err);
     }
   };
 
-  // ✅ إيقاف التسجيل
+  // إيقاف التسجيل
   const stopRecording = () => {
     if (mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
-      setRecording(false);
+      clearInterval(intervalRef.current);
+    }
+    setRecording(false);
+  };
+
+  // معالجة الصوت وإرساله لـ Wit.ai
+  const processAudio = async () => {
+    const blob = new Blob(audioChunksRef.current, { type: "audio/webm" }); // جرب webm
+    audioChunksRef.current = [];
+
+    const formData = new FormData();
+    formData.append("file", blob, "speech.webm");
+
+    try {
+      const response = await fetch("https://api.wit.ai/speech?v=20210928", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer WMFB2ARELBKH5LPN3U3RO65WNJFZ2UN7",
+        },
+        body: blob, // نبعت البودي مباشرة
+      });
+
+      const text = await response.text();
+      console.log("Wit.ai response:", text);
+      setTranscript(text); // علشان يظهر في h1
+    } catch (err) {
+      console.error("Wit.ai error:", err);
     }
   };
 
   return (
-    <div className="App" style={{ padding: 20, direction: "rtl" }}>
-      <h2>القرآن الكريم - صفحة {pageNumber}</h2>
-      <div style={{ marginBottom: 20 }} onClick={setPageNumber}>
-        {ayahs.map((ayah) => (
-          <p key={ayah.number} style={{ fontSize: "20px", lineHeight: "2" }}>
-            {ayah.text}
-          </p>
-        ))}
+    <div className="p-4">
+      <h1>📖 Quran Page {pageNumber}</h1>
+      {quranText.map((ayah) => (
+        <p key={ayah.number} style={{ direction: "rtl", fontSize: "20px" }}>
+          {ayah.text}
+        </p>
+      ))}
+
+      <div className="mt-4">
+        {!recording ? (
+          <button
+            onClick={startRecording}
+            className="bg-green-500 text-white px-4 py-2 rounded"
+          >
+            ▶️ ابدأ التسجيل
+          </button>
+        ) : (
+          <button
+            onClick={stopRecording}
+            className="bg-red-500 text-white px-4 py-2 rounded"
+          >
+            ⏹️ إيقاف التسجيل
+          </button>
+        )}
       </div>
 
-      <button onClick={recording ? stopRecording : startRecording}>
-        {recording ? "⏹️ إيقاف التسجيل" : "🎤 بدء التسجيل"}
-      </button>
-
-      <h3>رد Wit.ai:</h3>
-      <h1
-        style={{
-          fontSize: "14px",
-          direction: "ltr",
-          whiteSpace: "pre-wrap",
-          background: "#f4f4f4",
-          padding: "10px",
-          borderRadius: "8px",
-        }}
-      >
-        {witResponse || "لم يصل أي رد بعد"}
-      </h1>
+      <h1 className="mt-4">🎤 Wit.ai Response:</h1>
+      <pre style={{ whiteSpace: "pre-wrap" }}>{transcript}</pre>
     </div>
   );
 }
-
-export default App;
