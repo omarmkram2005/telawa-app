@@ -44,12 +44,23 @@ const App = () => {
     recognition.continuous = true; // تفعيل التعرف المستمر
 
     recognition.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
-      analyzeRecitation(transcript);
+      const results = event.results;
+      const transcript = results[results.length - 1][0].transcript.trim();
+
+      // تحليل النص المدخل فقط إذا كانت النتائج نهائية
+      if (results[results.length - 1].isFinal) {
+        analyzeRecitation(transcript);
+      }
     };
 
     recognition.onend = () => {
-      setIsRecording(false);
+      if (isRecording) {
+        recognition.start(); // إعادة بدء التعرف على الصوت
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.error("Recognition error:", event.error);
     };
 
     recognition.start();
@@ -59,12 +70,17 @@ const App = () => {
     if (!quranData) return;
 
     const currentVerseData = quranData.ayahs[currentVerse - 1];
-
-    // تحليل النص المدخل
     const words = text.split(" ");
+
     words.forEach((word, index) => {
       if (index < currentVerseData.text.split(" ").length) {
         const correctWord = currentVerseData.text.split(" ")[index];
+
+        // تحقق مما إذا كانت الكلمة قد تم التعرف عليها بالفعل
+        if (recognizedWords[`${currentVerse}-${index + 1}`]) {
+          return; // إذا كانت الكلمة قد تم التعرف عليها، لا تفعل شيئًا
+        }
+
         if (word === correctWord) {
           setRecognizedWords((prev) => ({
             ...prev,
@@ -115,17 +131,13 @@ const App = () => {
 };
 
 // const playSuccessSound = () => {
-//   const audio = new Audio(
-//     "https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3"
-//   );
-//   audio.play();
+//     const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3');
+//     audio.play();
 // };
 
 // const playErrorSound = () => {
-//   const audio = new Audio(
-//     "https://assets.mixkit.co/sfx/preview/mixkit-wrong-answer-fail-notification-946.mp3"
-//   );
-//   audio.play();
+//     const audio = new Audio('https://assets.mixkit.co/sfx/preview/mixkit-wrong-answer-fail-notification-946.mp3');
+//     audio.play();
 // };
 
 export default App;
