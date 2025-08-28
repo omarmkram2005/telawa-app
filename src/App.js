@@ -23,7 +23,7 @@ const App = () => {
   const fetchQuranPage = async (page) => {
     try {
       const response = await axios.get(
-        `http://api.alquran.cloud/v1/page/${page}/quran-uthmani`
+        `https://api.alquran.cloud/v1/page/${page}/quran-uthmani`
       );
       setQuranData(response.data.data); // تأكد من تعيين البيانات بشكل صحيح
     } catch (error) {
