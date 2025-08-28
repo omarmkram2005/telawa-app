@@ -1,148 +1,141 @@
 import React, { useState, useEffect } from "react";
 
-function App() {
+const App = () => {
   const [pageNumber, setPageNumber] = useState(1);
   const [ayahs, setAyahs] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [recognition, setRecognition] = useState(null);
+  const [currentAyahIndex, setCurrentAyahIndex] = useState(0);
+  const [results, setResults] = useState([]);
+  const [errors, setErrors] = useState(0);
 
   // تحميل الصفحة من API
-  useEffect(() => {
-    const fetchPage = async () => {
-      try {
-        const res = await fetch(
-          `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthmani`
-        );
-        const data = await res.json();
-        if (data.code === 200) {
-          setAyahs(data.data.ayahs);
-          setCurrentIndex(0);
-        }
-      } catch (err) {
-        console.error("Error fetching Quran data:", err);
+  const fetchPage = async (page) => {
+    try {
+      const response = await fetch(
+        `https://api.alquran.cloud/v1/page/${page}/quran-uthmani`
+      );
+      const data = await response.json();
+      if (data.status === "OK") {
+        setAyahs(data.data.ayahs);
+        setCurrentAyahIndex(0);
+        setResults([]);
+        setErrors(0);
       }
-    };
-
-    fetchPage();
-  }, [pageNumber]);
-
-  // دالة لحساب نسبة التشابه
-  const similarity = (s1, s2) => {
-    s1 = s1.replace(/[^\u0600-\u06FF ]/g, ""); // إزالة غير العربي
-    s2 = s2.replace(/[^\u0600-\u06FF ]/g, "");
-    const words1 = s1.split(" ");
-    const words2 = s2.split(" ");
-    let matches = 0;
-
-    words1.forEach((w, i) => {
-      if (words2[i] && words2[i].includes(w)) matches++;
-    });
-
-    return matches / Math.max(words1.length, words2.length);
+    } catch (err) {
+      console.error("Error fetching page:", err);
+    }
   };
 
-  // تفعيل التعرف على الصوت
   useEffect(() => {
-    if (!("webkitSpeechRecognition" in window)) {
-      alert("المتصفح لا يدعم التعرف على الصوت.");
+    fetchPage(pageNumber);
+  }, [pageNumber]);
+
+  // بدء التسجيل الصوتي
+  const startRecognition = () => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("المتصفح لا يدعم التعرف على الصوت");
       return;
     }
 
-    const rec = new window.webkitSpeechRecognition();
-    rec.lang = "ar-SA";
-    rec.continuous = true;
-    rec.interimResults = false;
+    const recog = new SpeechRecognition();
+    recog.lang = "ar-SA";
+    recog.continuous = true;
+    recog.interimResults = false;
 
-    rec.onresult = (event) => {
+    recog.onresult = (event) => {
       const transcript =
         event.results[event.results.length - 1][0].transcript.trim();
-      if (ayahs.length > 0 && currentIndex < ayahs.length) {
-        const currentAyah = ayahs[currentIndex].text.trim();
+      console.log("📢 قلت:", transcript);
 
-        const score = similarity(transcript, currentAyah);
+      const expected = ayahs[currentAyahIndex]?.text || "";
+      const isCorrect = transcript.includes(expected);
 
-        if (score > 0.8) {
-          document.getElementById(`ayah-${currentIndex}`).style.color = "green";
-          setCurrentIndex((prev) => prev + 1);
-        } else {
-          document.getElementById(`ayah-${currentIndex}`).style.color = "red";
-        }
+      if (isCorrect) {
+        setResults((prev) => [...prev, { ayah: expected, correct: true }]);
+        setCurrentAyahIndex((prev) => prev + 1);
+      } else {
+        setResults((prev) => [...prev, { ayah: expected, correct: false }]);
+        setErrors((prev) => prev + 1);
       }
     };
 
-    // منع الوقوف المفاجئ
-    rec.onend = () => {
-      if (isRecording) rec.start();
-    };
+    recog.start();
+    setRecognition(recog);
+    setIsRecording(true);
+  };
 
-    setRecognition(rec);
-  }, [ayahs, currentIndex, isRecording]);
-
-  const toggleRecording = () => {
-    if (!recognition) return;
-
-    if (isRecording) {
-      recognition.stop();
-      setIsRecording(false);
-    } else {
-      recognition.start();
-      setIsRecording(true);
-    }
+  // إيقاف التسجيل
+  const stopRecognition = () => {
+    if (recognition) recognition.stop();
+    setIsRecording(false);
   };
 
   return (
-    <div className="p-6 text-center">
-      <h1 className="text-2xl font-bold mb-4">📖 صفحة {pageNumber}</h1>
+    <div className="p-4 text-center">
+      <h1 className="text-2xl font-bold mb-4">📖 تطبيق تلاوة القرآن</h1>
 
-      {/* التنقل بين الصفحات */}
-      <div className="flex justify-center space-x-2 mb-4">
+      {/* أزرار التنقل بين الصفحات */}
+      <div className="flex gap-2 justify-center mb-4">
         <button
-          onClick={() => setPageNumber((p) => Math.max(1, p - 1))}
-          className="px-4 py-2 bg-gray-300 rounded"
+          className="bg-gray-300 px-3 py-1 rounded"
+          onClick={() => setPageNumber((prev) => Math.max(prev - 1, 1))}
         >
-          ⬅️ السابق
+          ⬅️ صفحة قبل
         </button>
-        <input
-          type="number"
-          value={pageNumber}
-          onChange={(e) => setPageNumber(Number(e.target.value))}
-          min="1"
-          max="604"
-          className="border px-2 py-1 w-20 text-center"
-        />
+        <span className="px-4 py-1 border rounded">الصفحة: {pageNumber}</span>
         <button
-          onClick={() => setPageNumber((p) => Math.min(604, p + 1))}
-          className="px-4 py-2 bg-gray-300 rounded"
+          className="bg-gray-300 px-3 py-1 rounded"
+          onClick={() => setPageNumber((prev) => prev + 1)}
         >
-          التالي ➡️
+          صفحة بعد ➡️
         </button>
       </div>
 
-      {/* زر التسجيل */}
-      <button
-        onClick={toggleRecording}
-        className={`px-6 py-2 rounded font-bold ${
-          isRecording ? "bg-red-500 text-white" : "bg-green-500 text-white"
-        }`}
-      >
-        {isRecording ? "⏹️ إيقاف" : "🎤 بدء التسجيل"}
-      </button>
-
       {/* عرض الآيات */}
-      <div className="mt-6 space-y-2 text-xl leading-relaxed text-right">
-        {ayahs.length > 0 ? (
-          ayahs.map((ayah, index) => (
-            <p key={ayah.number} id={`ayah-${index}`} className="ayah">
-              {ayah.text}
-            </p>
-          ))
+      <div className="border p-4 rounded text-right leading-loose">
+        {ayahs.map((ayah, index) => {
+          const result = results[index];
+          return (
+            <span
+              key={ayah.number}
+              className={`px-1 ${
+                result ? (result.correct ? "bg-green-200" : "bg-red-200") : ""
+              }`}
+            >
+              {ayah.text}{" "}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* أزرار التسجيل */}
+      <div className="mt-4">
+        {!isRecording ? (
+          <button
+            className="bg-green-500 text-white px-4 py-2 rounded"
+            onClick={startRecognition}
+          >
+            🎤 ابدأ التسجيل
+          </button>
         ) : (
-          <p>جارِ تحميل الصفحة...</p>
+          <button
+            className="bg-red-500 text-white px-4 py-2 rounded"
+            onClick={stopRecognition}
+          >
+            ⏹️ أوقف التسجيل
+          </button>
         )}
+      </div>
+
+      {/* عرض النتيجة */}
+      <div className="mt-4">
+        <p>عدد الأخطاء: {errors}</p>
       </div>
     </div>
   );
-}
+};
 
 export default App;
