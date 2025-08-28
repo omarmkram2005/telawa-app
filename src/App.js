@@ -13,24 +13,24 @@ export default function QuranRecitationApp() {
   const mediaRecorderRef = useRef(null);
   const intervalRef = useRef(null);
 
-  // Fetch Quran page
+  // ✅ Fetch full Quran page
   useEffect(() => {
     const fetchPage = async () => {
       const res = await fetch(
-        `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthmani`
+        `https://api.quran.com/v4/quran/verses/uthmani?page_number=${pageNumber}`
       );
       const data = await res.json();
-      if (data.status === "OK") {
-        setAyahs(data.data.ayahs);
+      if (data?.verses) {
+        setAyahs(data.verses);
         setCurrentAyahIndex(0);
       }
     };
     fetchPage();
   }, [pageNumber]);
 
-  const currentAyah = ayahs[currentAyahIndex]?.text || "";
+  const currentAyah = ayahs[currentAyahIndex]?.text_uthmani || "";
 
-  // Start recording in chunks
+  // 🎙️ Start recording
   const startRecording = async () => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaRecorderRef.current = new MediaRecorder(stream);
@@ -51,14 +51,14 @@ export default function QuranRecitationApp() {
     setRecording(true);
   };
 
-  // Stop recording
+  // ⏹️ Stop recording
   const stopRecording = () => {
     clearInterval(intervalRef.current);
     mediaRecorderRef.current.stop();
     setRecording(false);
   };
 
-  // Send audio to Wit.ai
+  // 🚀 Send audio to Wit.ai
   const sendToWit = async (audioBlob) => {
     const response = await fetch("https://api.wit.ai/speech?v=20230928", {
       method: "POST",
@@ -69,14 +69,18 @@ export default function QuranRecitationApp() {
       body: audioBlob,
     });
 
-    const data = await response.json();
-    if (data.text) {
-      setRecognized(data.text);
-      highlightWords(data.text);
+    try {
+      const data = await response.json();
+      if (data.text) {
+        setRecognized(data.text);
+        highlightWords(data.text);
+      }
+    } catch (err) {
+      console.error("Error parsing response", err);
     }
   };
 
-  // Compare recognized text with current ayah
+  // ✅ Compare recognized text with ayah
   const highlightWords = (recText) => {
     const ayahWords = currentAyah.split(" ");
     const recWords = recText.split(" ");
@@ -111,21 +115,29 @@ export default function QuranRecitationApp() {
 
       <h2 className="text-xl mb-2">Page {pageNumber}</h2>
 
-      <p className="text-2xl leading-loose">
-        {highlighted.length > 0
-          ? highlighted.map((w, i) => (
-              <span
-                key={i}
-                style={{
-                  color: w.correct ? "green" : "red",
-                  marginRight: 6,
-                }}
-              >
-                {w.word}
-              </span>
-            ))
-          : currentAyah}
-      </p>
+      <div className="space-y-6">
+        {ayahs.map((ayah, i) => (
+          <p
+            key={ayah.id}
+            className="text-2xl leading-loose cursor-pointer"
+            onClick={() => setCurrentAyahIndex(i)}
+          >
+            {currentAyahIndex === i && highlighted.length > 0
+              ? highlighted.map((w, j) => (
+                  <span
+                    key={j}
+                    style={{
+                      color: w.correct ? "green" : "red",
+                      marginRight: 6,
+                    }}
+                  >
+                    {w.word}
+                  </span>
+                ))
+              : ayah.text_uthmani}
+          </p>
+        ))}
+      </div>
 
       <div className="mt-6">
         {!recording ? (
