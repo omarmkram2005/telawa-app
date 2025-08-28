@@ -97,17 +97,23 @@ function App() {
         });
 
         const text = await res.text();
-
         setDebug((prev) => prev + ` | Raw: ${text}`);
 
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (err) {
-          setDebug((prev) => prev + " | JSON parse failed");
-        }
+        const lines = text.split("\n").filter((l) => l.trim() !== "");
 
-        setTranscript(data?.text || "❌ مفيش كلام متعرف عليه");
+        let finalTranscript = "";
+        lines.forEach((line) => {
+          try {
+            const data = JSON.parse(line);
+            if (data.type === "FINAL_TRANSCRIPTION") {
+              finalTranscript = data.text;
+            }
+          } catch (err) {
+            setDebug((prev) => prev + " | JSON parse failed line");
+          }
+        });
+
+        setTranscript(finalTranscript || "❌ مفيش كلام متعرف عليه");
       } catch (err) {
         setTranscript("❌ حصل Error");
         setDebug("Fetch Error: " + err.message);
