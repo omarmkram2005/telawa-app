@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/** --------- أدوات Arabic Normalization & Similarity --------- **/
+/** --------- Arabic Normalization --------- **/
 const AR_DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g;
 const PUNCT = /[^\u0600-\u06FF\s]/g; // غير العربي
 const TATWEEL = /\u0640/g;
@@ -20,10 +20,8 @@ function normalizeArabic(s) {
 }
 
 function levenshtein(a, b) {
-  const s = a,
-    t = b;
-  const m = s.length,
-    n = t.length;
+  const m = a.length,
+    n = b.length;
   if (!m) return n;
   if (!n) return m;
   const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
@@ -31,11 +29,11 @@ function levenshtein(a, b) {
   for (let j = 0; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
       dp[i][j] = Math.min(
-        dp[i - 1][j] + 1, // delete
-        dp[i][j - 1] + 1, // insert
-        dp[i - 1][j - 1] + cost // replace
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
       );
     }
   }
@@ -47,43 +45,38 @@ function similarityChars(a, b) {
   b = normalizeArabic(b);
   const maxLen = Math.max(a.length, b.length) || 1;
   const dist = levenshtein(a, b);
-  return 1 - dist / maxLen; // 0..1
+  return 1 - dist / maxLen;
 }
 
 /** --------- المكون الرئيسي --------- **/
 export default function App() {
   const [pageNumber, setPageNumber] = useState(1);
-  const [ayahs, setAyahs] = useState([]); // [{number,text,...}]
+  const [ayahs, setAyahs] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
 
-  // مؤشر المكان الحالي: آية وكلمة
   const [ayahIdx, setAyahIdx] = useState(0);
   const [wordIdx, setWordIdx] = useState(0);
 
-  // حالات تلوين الكلمات لكل آية: "pending" | "correct" | "wrong"
-  const [wordStates, setWordStates] = useState([]); // [[state,...], [...], ...]
+  const [wordStates, setWordStates] = useState([]);
+  const [liveWord, setLiveWord] = useState(""); // الكلمة اللي بتتقال حالياً
 
   const recRef = useRef(null);
-  const finalBufferRef = useRef(""); // نجمع النص النهائي
   const beepRef = useRef(null);
 
-  // تقسيم الآيات لكلمات مُطبَّعة
   const wordsByAyah = useMemo(() => {
     return ayahs.map((a) => normalizeArabic(a.text).split(" ").filter(Boolean));
   }, [ayahs]);
 
-  // تحميل الصفحة من API (الصيغة اللي طلبتها)
+  // تحميل الآيات
   useEffect(() => {
-    let cancelled = false;
     (async () => {
       try {
         const res = await fetch(
           `https://api.alquran.cloud/v1/page/${pageNumber}/quran-uthman`
         );
         const data = await res.json();
-        if (!cancelled && data?.code === 200) {
+        if (data?.code === 200) {
           setAyahs(data.data.ayahs || []);
-          // إعادة الضبط للمؤشرات والتلوين
           const initStates = (data.data.ayahs || []).map((a) =>
             new Array(
               normalizeArabic(a.text).split(" ").filter(Boolean).length
@@ -97,20 +90,17 @@ export default function App() {
         console.error("Fetch error:", e);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, [pageNumber]);
 
-  // إعداد صوت تنبيه للغلط
+  // beep بسيط
   useEffect(() => {
     const audio = new Audio(
       "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAACAAAAPwAA"
-    ); // tiny silent/beep-ish placeholder (safe)
+    );
     beepRef.current = audio;
   }, []);
 
-  // تشغيل/إيقاف التعرف على الصوت
+  // تشغيل التعرف
   const start = () => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) {
@@ -123,23 +113,25 @@ export default function App() {
     rec.interimResults = true;
 
     rec.onresult = (e) => {
-      // آخر نتيجة
       const r = e.results[e.results.length - 1];
       const text = r[0]?.transcript || "";
       const norm = normalizeArabic(text);
 
-      // لو نهائي: ضمّه للمخزن ونقارن
-      if (r.isFinal) {
-        finalBufferRef.current += (finalBufferRef.current ? " " : "") + norm;
-        processTranscript(norm, true);
+      if (!r.isFinal) {
+        // interim: أظلل الكلمة الحالية
+        const live = norm.split(" ").filter(Boolean).pop();
+        setLiveWord(live || "");
       } else {
-        // interim: هنقارن برضه لكن بدون تثبيت حالة "wrong" النهائية
-        processTranscript(norm, false);
+        // النتيجة النهائية
+        setLiveWord("");
+        const heardWords = norm.split(" ").filter(Boolean);
+        heardWords.forEach((hw) => {
+          processWord(hw);
+        });
       }
     };
 
     rec.onend = () => {
-      // استمرار فعلي
       if (isRecording) {
         try {
           rec.start();
@@ -158,13 +150,13 @@ export default function App() {
 
   const stop = () => {
     setIsRecording(false);
+    setLiveWord("");
     try {
       recRef.current && recRef.current.stop();
     } catch {}
   };
 
-  // مقارنة كلمة بالكلمة
-  const processTranscript = (normText, commit) => {
+  const processWord = (heardWord) => {
     if (!wordsByAyah.length) return;
 
     let aIdx = ayahIdx;
@@ -173,59 +165,41 @@ export default function App() {
     let expected = wordsByAyah[aIdx]?.[wIdx];
     if (!expected) return;
 
-    // ناخد آخر كلمة اتقالت في الـ transcript (أو كذا كلمة ونطابق الأقرب)
-    const heardWords = normText.split(" ").filter(Boolean);
-    const lastHeard = heardWords[heardWords.length - 1] || "";
+    const score = similarityChars(heardWord, expected);
+    const pass = score >= 0.78;
 
-    // تشابه أحرف (مرن)
-    const score = similarityChars(lastHeard, expected); // 0..1
-    const pass = score >= 0.78; // عتبة معقولة
+    setWordStates((prev) => {
+      const copy = prev.map((arr) => arr.slice());
+      copy[aIdx][wIdx] = pass ? "correct" : "wrong";
+      return copy;
+    });
 
-    // تحديث تلوين الكلمة الحالية فقط عند commit=true (نهائي)
-    if (commit) {
-      setWordStates((prev) => {
-        const copy = prev.map((arr) => arr.slice());
-        copy[aIdx][wIdx] = pass ? "correct" : "wrong";
-        return copy;
-      });
-
-      if (pass) {
-        // الكلمة صح → نتقدم
-        const nextWordIdx = wIdx + 1;
-        const wordsCount = wordsByAyah[aIdx].length;
-        if (nextWordIdx < wordsCount) {
-          setWordIdx(nextWordIdx);
-        } else {
-          // خلصت آية → انتقل للآية التالية
-          const nextAyahIdx = aIdx + 1;
-          if (nextAyahIdx < wordsByAyah.length) {
-            setAyahIdx(nextAyahIdx);
-            setWordIdx(0);
-          } else {
-            // خلصت الصفحة → انتقل تلقائيًا
-            setPageNumber((p) => Math.min(604, p + 1));
-            // نسيب المايك شغال كما هو
-          }
-        }
+    if (pass) {
+      const nextWordIdx = wIdx + 1;
+      if (nextWordIdx < wordsByAyah[aIdx].length) {
+        setWordIdx(nextWordIdx);
       } else {
-        // خطأ: نهز/نصدر صوت
-        try {
-          navigator.vibrate && navigator.vibrate(120);
-        } catch {}
-        try {
-          if (beepRef.current) {
-            // البعض يمنع التشغيل من غير تفاعل؛ فلو ما اشتغلتش مفيش مشكلة
-            beepRef.current.currentTime = 0;
-            beepRef.current.play().catch(() => {});
-          }
-        } catch {}
+        const nextAyahIdx = aIdx + 1;
+        if (nextAyahIdx < wordsByAyah.length) {
+          setAyahIdx(nextAyahIdx);
+          setWordIdx(0);
+        } else {
+          setPageNumber((p) => Math.min(604, p + 1));
+        }
       }
+    } else {
+      try {
+        navigator.vibrate && navigator.vibrate(120);
+      } catch {}
+      try {
+        if (beepRef.current) {
+          beepRef.current.currentTime = 0;
+          beepRef.current.play().catch(() => {});
+        }
+      } catch {}
     }
-    // لو مش commit (interim): ممكن ندي لمسة UI خفيفة لاحقًا (مثلاً underline)،
-    // بس علشان البساطة هنا هنسيب اللون ثابت لآخر نتيجة نهائية.
   };
 
-  // UI مساعد لإبراز الكلمة الحالية
   const isCurrent = (iAyah, iWord) => iAyah === ayahIdx && iWord === wordIdx;
 
   return (
@@ -234,7 +208,6 @@ export default function App() {
         📖 تطبيق تلاوة القرآن
       </h1>
 
-      {/* تنقل الصفحات */}
       <div className="flex items-center justify-center gap-3 mb-4">
         <button
           className="px-3 py-1 rounded bg-gray-200"
@@ -264,7 +237,6 @@ export default function App() {
         </button>
       </div>
 
-      {/* أزرار التسجيل */}
       <div className="flex justify-center mb-4">
         {!isRecording ? (
           <button
@@ -283,10 +255,10 @@ export default function App() {
         )}
       </div>
 
-      {/* عرض الآيات كلمة بكلمة مع التلوين */}
       <div
         dir="rtl"
         className="border rounded p-4 text-2xl leading-loose text-right"
+        style={{ wordSpacing: "0.4em" }}
       >
         {ayahs.length === 0 ? (
           <p>جارٍ تحميل الصفحة...</p>
@@ -299,35 +271,39 @@ export default function App() {
                 .map((w, iWord) => {
                   const state = wordStates[iAyah]?.[iWord] || "pending";
                   const current = isCurrent(iAyah, iWord);
-                  const classes =
-                    state === "correct"
-                      ? "bg-green-200 rounded px-1"
-                      : state === "wrong"
-                      ? "bg-red-200 rounded px-1"
-                      : current
-                      ? "underline decoration-2"
-                      : "";
+
+                  let classes = "";
+                  if (state === "correct")
+                    classes = "bg-green-200 rounded px-1";
+                  else if (state === "wrong")
+                    classes = "bg-red-200 rounded px-1";
+                  else if (current) classes = "underline decoration-2";
+
+                  // تظليل حي (أزرق فاتح) لو الكلمة اللي بتتقال دلوقتي
+                  const expected = normalizeArabic(w);
+                  if (
+                    current &&
+                    liveWord &&
+                    similarityChars(liveWord, expected) > 0.5
+                  ) {
+                    classes = "bg-blue-200 rounded px-1";
+                  }
 
                   return (
                     <span
                       key={iWord}
                       className={classes}
-                      style={{ marginInline: 2 }}
+                      style={{ marginInline: 3 }}
                     >
                       {w}
                     </span>
                   );
                 })}
-              {/* رقم الآية */}
               <span className="opacity-60"> ﴿{iAyah + 1}﴾</span>
             </div>
           ))
         )}
       </div>
-
-      <p className="text-center mt-3 text-sm opacity-70">
-        تلميح: لو لقيت التعرف وقف فجأة، الزر «بدء التسجيل» يعيد تشغيله فورًا.
-      </p>
     </div>
   );
 }
